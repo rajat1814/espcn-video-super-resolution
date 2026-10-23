@@ -1,0 +1,2 @@
+Duration_s,Frames_Processed,Dropped_Frames,Median_Latency_ms,Mean_Latency_ms,P95_Latency_ms,Mean_FPS
+60.0,3798,0,14.85,14.33,16.28,69.77

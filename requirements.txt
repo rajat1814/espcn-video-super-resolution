@@ -6,5 +6,8 @@ opencv-python
 Pillow
 scikit-image
 onnx
-onnxruntime
+onnxscript
+onnxruntime-gpu; platform_system != "Darwin"
+onnxruntime; platform_system == "Darwin"
+onnxconverter-common
 matplotlib
