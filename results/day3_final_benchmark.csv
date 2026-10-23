@@ -1,0 +1,5 @@
+Model,Size_MB,Latency_ms,FPS,Meets_30_FPS
+PyTorch FP32 CPU,,74.83,13.36,False
+ONNX FP32 CPU (initial benchmark),0.0862,38.72,25.83,False
+ONNX FP32 CPU (4-thread test),0.0862,44.92,22.26,False
+ONNX INT8 CPU,0.0261,550.46,1.82,False
