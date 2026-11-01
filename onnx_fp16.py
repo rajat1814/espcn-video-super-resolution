@@ -36,6 +36,11 @@ except ImportError as exc:
     )
 
 try:
+    ort.preload_dlls()  # reuse PyTorch/NVIDIA CUDA+cuDNN DLLs (onnxruntime-gpu >= 1.21)
+except Exception:
+    pass
+
+try:
     from onnxconverter_common import float16
 except ImportError as exc:
     sys.exit(

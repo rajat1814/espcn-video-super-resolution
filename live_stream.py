@@ -52,6 +52,11 @@ except ImportError as exc:
     )
 
 
+try:
+    ort.preload_dlls()  # reuse PyTorch/NVIDIA CUDA+cuDNN DLLs (onnxruntime-gpu >= 1.21)
+except Exception:
+    pass
+
 class ONNXSuperResolver:
     """ONNX Runtime inference engine for Y-channel (`[1, 1, H, W]`) super-resolution."""
 
@@ -290,8 +295,6 @@ def resolve_default_model(requested: Path) -> Path:
     candidates = [
         Path("models/espcn_codec_adapted_fp16.onnx"),
         Path("models/espcn_codec_adapted.onnx"),
-        Path("dummy_fp16.onnx"),
-        Path("dummy_fp32.onnx"),
     ]
     for cand in candidates:
         if cand.exists():
@@ -371,11 +374,14 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional path to save a rendered side-by-side PNG frame.",
     )
+    parser.add_argument("--stress-display", action="store_true",
+                        help="Keep the preview window open during --stress-seconds (end-to-end test incl. rendering).")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    show_window = args.headless_frames == 0 and (args.stress_seconds == 0.0 or args.stress_display)
     model_path = resolve_default_model(args.model)
 
     print(f"• Available ORT Providers    : {ort.get_available_providers()}")
@@ -386,13 +392,14 @@ def main() -> None:
         primary_engine = ONNXSuperResolver(model_path, scale=args.scale, device=args.device)
         print(f"• Loaded primary ONNX model  : `{model_path}` ({primary_engine.active_provider})")
     else:
-        print(f"• [WARNING] Model `{model_path}` not found; running in Bicubic-only mode.")
+        sys.exit(f"[ERROR] Model `{model_path}` not found. Export it first (export_onnx.py / onnx_fp16.py).")
 
     if args.baseline_model and args.baseline_model.exists():
         baseline_engine = ONNXSuperResolver(args.baseline_model, scale=args.scale, device=args.device)
         print(f"• Loaded secondary ONNX model: `{args.baseline_model}` ({baseline_engine.active_provider})")
     else:
-        baseline_engine = primary_engine
+        baseline_engine = None
+        print("• [INFO] No --baseline-model given: hotkey [2] is disabled (pass the clean-trained ONNX to enable it).")
 
     use_synthetic = args.source.lower() == "synthetic"
     cap: Optional[cv2.VideoCapture] = None
@@ -400,8 +407,7 @@ def main() -> None:
         src: int | str = int(args.source) if args.source.isdigit() else args.source
         cap = cv2.VideoCapture(src)
         if not cap.isOpened():
-            print(f"• [INFO] Video source `{args.source}` unavailable; using synthetic test stream.")
-            use_synthetic = True
+            sys.exit(f"[ERROR] Video source `{args.source}` could not be opened (use --source synthetic for the test pattern).")
 
     writer: Optional[cv2.VideoWriter] = None
     active_mode = 3 if primary_engine is not None else 1
@@ -484,7 +490,7 @@ def main() -> None:
                     writer = cv2.VideoWriter(str(args.record_video), fourcc, 30.0, (w_c, h_c))
                 writer.write(combined)
 
-            if args.headless_frames == 0 and args.stress_seconds == 0.0:
+            if show_window:
                 cv2.imshow("ESPCN Real-Time Super-Resolution Engine (Bicubic vs. ONNX)", combined)
                 key = cv2.waitKey(1) & 0xFF
                 if key in (ord("q"), 27):
@@ -514,7 +520,7 @@ def main() -> None:
             print(f"• Saved recorded stream to `{args.record_video}`.")
         if cap is not None:
             cap.release()
-        if args.headless_frames == 0 and args.stress_seconds == 0.0:
+        if show_window:
             cv2.destroyAllWindows()
 
     if args.save_sample is not None and last_combined is not None:
@@ -534,12 +540,19 @@ def main() -> None:
         )
 
         if args.stress_seconds > 0:
+            wall_s = time.perf_counter() - stream_start
+            wall_fps = frame_idx / wall_s if wall_s > 0 else 0.0
             stress_csv = Path("results/pipeline_stress_test.csv")
             stress_csv.parent.mkdir(parents=True, exist_ok=True)
-            with stress_csv.open("w", newline="", encoding="utf-8") as f:
+            write_header = not stress_csv.exists()
+            with stress_csv.open("a", newline="", encoding="utf-8") as f:
                 w = csv.writer(f)
-                w.writerow(["Duration_s", "Frames_Processed", "Dropped_Frames", "Median_Latency_ms", "Mean_Latency_ms", "P95_Latency_ms", "Mean_FPS"])
-                w.writerow([round(args.stress_seconds, 1), frame_idx, dropped_frames, round(median_ms, 2), round(mean_ms, 2), round(p95_ms, 2), round(avg_fps, 2)])
+                if write_header:
+                    w.writerow(["Model", "Provider", "Source", "Display", "Duration_s", "Frames_Processed", "Dropped_Frames",
+                                "Median_Latency_ms", "Mean_Latency_ms", "P95_Latency_ms", "Processing_FPS", "WallClock_FPS"])
+                w.writerow([model_path.name, primary_engine.active_provider if primary_engine else "none", args.source,
+                            "on" if args.stress_display else "off", round(wall_s, 1), frame_idx, dropped_frames, round(median_ms, 2),
+                            round(mean_ms, 2), round(p95_ms, 2), round(avg_fps, 2), round(wall_fps, 2)])
             print(f"• Exported stability telemetry to `{stress_csv}`.")
 
 

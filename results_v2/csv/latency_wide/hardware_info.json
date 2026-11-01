@@ -1,0 +1,19 @@
+{
+  "platform": "Windows-10-10.0.26200-SP0",
+  "cpu": "Intel64 Family 6 Model 154 Stepping 3, GenuineIntel",
+  "python": "3.11.9",
+  "torch": "2.14.1+cu132",
+  "onnxruntime": "1.31.1",
+  "ort_providers": [
+    "TensorrtExecutionProvider",
+    "CUDAExecutionProvider",
+    "CPUExecutionProvider"
+  ],
+  "gpu": "NVIDIA GeForce RTX 3050 Laptop GPU",
+  "input_shape": [
+    1,
+    1,
+    180,
+    320
+  ]
+}

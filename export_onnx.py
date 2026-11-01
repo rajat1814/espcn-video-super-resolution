@@ -47,6 +47,25 @@ except ImportError as exc:
     )
 
 
+def _bicubic_polyphase_2x() -> torch.Tensor:
+    """Exact 2x bicubic (a=-0.75, replicate borders) as a fixed 5x5 conv with 4 phases -> PixelShuffle(2).
+    Equivalent to cv2/torch bicubic but exports as plain Pad+Conv, which is MUCH faster than ONNX `Resize` on CPU."""
+    a = -0.75
+
+    def w(t: float) -> float:
+        t = abs(t)
+        if t <= 1:
+            return (a + 2) * t ** 3 - (a + 3) * t ** 2 + 1
+        if t < 2:
+            return a * t ** 3 - 5 * a * t ** 2 + 8 * a * t - 4 * a
+        return 0.0
+
+    p0 = [w(1.75), w(0.75), w(0.25), w(1.25), 0.0]
+    p1 = [0.0, w(1.25), w(0.25), w(0.75), w(1.75)]
+    k = torch.tensor([[[a_ * b_ for b_ in wx] for a_ in wy] for wy in (p0, p1) for wx in (p0, p1)], dtype=torch.float32)
+    return k.unsqueeze(1)
+
+
 class ESPCN(nn.Module):
     """Efficient Sub-Pixel Convolutional Neural Network (Shi et al., CVPR 2016)
     configured for single-channel luminance (Y-channel) super-resolution.
@@ -55,18 +74,30 @@ class ESPCN(nn.Module):
     Output Tensor: `sr_y` of shape `[B, 1, H * scale_factor, W * scale_factor]`
     """
 
-    def __init__(self, scale_factor: int = 2) -> None:
+    def __init__(self, scale_factor: int = 2, c1: int = 64, c2: int = 32, residual: bool = False) -> None:
         super().__init__()
         self.scale_factor = scale_factor
-        self.conv1 = nn.Conv2d(1, 64, kernel_size=5, padding=2)
-        self.conv2 = nn.Conv2d(64, 32, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv2d(32, scale_factor ** 2, kernel_size=3, padding=1)
+        self.residual = residual
+        self.register_buffer("res_flag", torch.tensor(1 if residual else 0))
+        self.register_buffer("skip_w", _bicubic_polyphase_2x(), persistent=False)
+        self.fast_skip = False  # set True only while exporting to ONNX (scale 2)
+        self.conv1 = nn.Conv2d(1, c1, kernel_size=5, padding=2)
+        self.conv2 = nn.Conv2d(c1, c2, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv2d(c2, scale_factor ** 2, kernel_size=3, padding=1)
         self.shuffle = nn.PixelShuffle(scale_factor)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        inp = x
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
-        return self.shuffle(self.conv3(x))
+        out = self.shuffle(self.conv3(x))
+        if self.residual:
+            if self.fast_skip and self.scale_factor == 2:
+                skip = F.conv2d(F.pad(inp, (2, 2, 2, 2), mode="replicate"), self.skip_w)
+                out = out + F.pixel_shuffle(skip, 2)
+            else:
+                out = out + F.interpolate(inp, scale_factor=self.scale_factor, mode="bicubic", align_corners=False)
+        return out
 
 
 def verify_environment() -> None:
@@ -84,46 +115,25 @@ def verify_environment() -> None:
 
 def load_espcn_checkpoint(weights_path: Path, scale: int) -> nn.Module:
     """Instantiate the ESPCN architecture and load weights from disk.
-    If no checkpoint exists at `weights_path`, initializes a baseline checkpoint
-    for pipeline verification.
+    Exits with an error if the checkpoint is missing (no silent random-weight export).
     """
     print("=" * 72)
     print("2. MODEL ARCHITECTURE & CHECKPOINT INITIALIZATION")
     print("=" * 72)
 
-    models_dir = Path("models")
-    espcn_module_path = models_dir / "espcn.py"
-    if not espcn_module_path.exists():
-        models_dir.mkdir(parents=True, exist_ok=True)
-        espcn_module_path.write_text(
-            '"""ESPCN Super-Resolution Architecture (Y-Channel)."""\n'
-            "import torch\nimport torch.nn as nn\nimport torch.nn.functional as F\n\n\n"
-            "class ESPCN(nn.Module):\n"
-            "    def __init__(self, scale_factor: int = 2) -> None:\n"
-            "        super().__init__()\n"
-            "        self.conv1 = nn.Conv2d(1, 64, kernel_size=5, padding=2)\n"
-            "        self.conv2 = nn.Conv2d(64, 32, kernel_size=3, padding=1)\n"
-            "        self.conv3 = nn.Conv2d(32, scale_factor ** 2, kernel_size=3, padding=1)\n"
-            "        self.shuffle = nn.PixelShuffle(scale_factor)\n\n"
-            "    def forward(self, x: torch.Tensor) -> torch.Tensor:\n"
-            "        x = F.relu(self.conv1(x))\n"
-            "        x = F.relu(self.conv2(x))\n"
-            "        return self.shuffle(self.conv3(x))\n",
-            encoding="utf-8",
-        )
-        print("• Generated `models/espcn.py` module definition.")
-
-    model = ESPCN(scale_factor=scale)
-
     if not weights_path.exists():
-        print(f"• Checkpoint `{weights_path}` not found; initializing baseline weights...")
-        weights_path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(model.state_dict(), weights_path)
-        print(f"• Saved initialized checkpoint to `{weights_path}`.")
+        sys.exit(
+            f"[ERROR] Checkpoint `{weights_path}` not found.\n"
+            "Refusing to export randomly initialised weights. Train first (train.py) "
+            "or pass the correct --weights path."
+        )
 
     state = torch.load(weights_path, map_location="cpu", weights_only=True)
     if isinstance(state, dict) and "state_dict" in state:
         state = state["state_dict"]
+    state = dict(state)
+    state.setdefault("res_flag", torch.tensor(0))
+    model = ESPCN(scale_factor=scale, c1=state["conv1.weight"].shape[0], c2=state["conv2.weight"].shape[0], residual=bool(int(state["res_flag"])))
     model.load_state_dict(state, strict=True)
     model.eval()
     param_count = sum(p.numel() for p in model.parameters())
@@ -145,6 +155,7 @@ def export_to_onnx(
     print("=" * 72)
 
     sample_input = torch.randn(1, 1, height, width, dtype=torch.float32)
+    model.fast_skip = True   # export graph uses Pad+Conv bicubic skip (fast on CPU)
     output_onnx_path.parent.mkdir(parents=True, exist_ok=True)
 
     export_kwargs = dict(
@@ -174,6 +185,7 @@ def export_to_onnx(
     session = ort.InferenceSession(str(output_onnx_path), providers=providers)
 
     test_input = np.random.rand(1, 1, height, width).astype(np.float32)
+    model.fast_skip = False  # reference = PyTorch's own bicubic
     with torch.no_grad():
         pytorch_output = model(torch.from_numpy(test_input)).numpy()
     onnx_output = session.run(["sr_y"], {"lr_y": test_input})[0]

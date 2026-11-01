@@ -1,0 +1,2 @@
+Model,Provider,Source,Display,Duration_s,Frames_Processed,Dropped_Frames,Median_Latency_ms,Mean_Latency_ms,P95_Latency_ms,Processing_FPS,WallClock_FPS
+espcn_codec_res_v3_fp16.onnx,CUDAExecutionProvider,results\lowbit_test.mp4,on,900.0,57476,0,5.94,6.37,10.69,156.88,63.86
