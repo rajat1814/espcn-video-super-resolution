@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ESPCN Video Super-Resolution & Artifact Suppression</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body class="dark-theme">
+
+  <!-- Top Floating Capsule Navigation Bar (as per wireframe) -->
+  <header class="top-nav-wrapper">
+    <div class="floating-pill-nav">
+      <div class="brand-pill">
+        <span class="brand-dot"></span>
+        <span class="brand-name">ESPCN 2× SR</span>
+      </div>
+
+      <nav class="nav-modes">
+        <button class="mode-btn active" data-mode="photo" id="tabPhoto">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+          Photo
+        </button>
+        <button class="mode-btn" data-mode="video" id="tabVideo">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>
+          Video
+        </button>
+        <button class="mode-btn" data-mode="live" id="tabLive">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
+          Live Feed
+        </button>
+        <button class="mode-btn" data-mode="benchmark" id="tabBenchmark">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          Benchmark
+        </button>
+      </nav>
+
+      <div class="server-status-pill" id="statusPill" title="Server Status">
+        <span class="status-pulse" id="statusPulse"></span>
+        <span class="status-text" id="statusText">Connecting...</span>
+        <span class="hardware-badge" id="hardwareBadge">CPU</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Comparison Viewport (Raw vs Modified) -->
+  <main class="main-container">
+    <div class="comparison-grid">
+
+      <!-- LEFT BOX: RAW INPUT -->
+      <section class="display-box raw-box" id="rawCard">
+        <div class="box-header">
+          <div class="box-title">
+            <span class="badge raw-badge">RAW INPUT</span>
+            <span class="box-subtitle" id="rawResSubtitle">Awaiting input...</span>
+          </div>
+          <div class="box-meta" id="rawMeta">
+            <span class="meta-tag" id="rawTypeTag">Original</span>
+          </div>
+        </div>
+
+        <div class="viewport-stage" id="rawViewport">
+          <!-- Placeholder state -->
+          <div class="empty-state" id="rawEmptyState">
+            <div class="empty-icon">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+            </div>
+            <p class="empty-title">Drag & drop an image or video</p>
+            <p class="empty-desc">or click below to choose a file</p>
+          </div>
+
+          <!-- Video element for video/webcam -->
+          <video id="rawVideo" autoplay playsinline muted class="display-media hidden"></video>
+
+          <!-- Image element for static photos -->
+          <img id="rawImage" class="display-media hidden" alt="Raw Frame" />
+
+          <!-- Live canvas for webcam extraction -->
+          <canvas id="liveCaptureCanvas" class="hidden"></canvas>
+        </div>
+
+        <!-- Controls BELOW Raw Box (as requested) -->
+        <div class="box-footer-controls">
+          <div class="compression-toggle-row">
+            <label class="custom-checkbox-label">
+              <input type="checkbox" id="addCompressionCheckbox">
+              <span class="checkbox-custom"></span>
+              <span class="checkbox-text">
+                <strong>Add network compression</strong>
+                <small>Simulates low-bitrate packet/codec artifacts (JPEG DCT blocks & blur)</small>
+              </span>
+            </label>
+          </div>
+
+          <!-- Slider appears when compression is enabled -->
+          <div class="compression-slider-panel hidden" id="compressionSliderPanel">
+            <div class="slider-header">
+              <span>Compression Artifact Level:</span>
+              <span class="slider-val" id="compressionValLabel">JPEG Q=30 (Heavy)</span>
+            </div>
+            <input type="range" id="compressionSlider" min="10" max="90" step="10" value="30">
+            <div class="slider-presets">
+              <button class="preset-chip active" data-q="30">Q30 (Streaming)</button>
+              <button class="preset-chip" data-q="20">Q20 (Heavy)</button>
+              <button class="preset-chip" data-q="10">Q10 (Extreme)</button>
+            </div>
+          </div>
+
+          <!-- Input Action Buttons -->
+          <div class="input-actions-bar">
+            <!-- Photo Mode Actions -->
+            <div class="mode-actions" id="photoActions">
+              <input type="file" id="photoFileInput" accept="image/*" class="hidden">
+              <button class="action-btn primary" id="btnUploadPhoto">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+                Upload Photo
+              </button>
+              <button class="action-btn secondary" id="btnSamplePhoto">
+                Load Sample Frame
+              </button>
+            </div>
+
+            <!-- Video Mode Actions -->
+            <div class="mode-actions hidden" id="videoActions">
+              <input type="file" id="videoFileInput" accept="video/mp4,video/webm" class="hidden">
+              <button class="action-btn primary" id="btnUploadVideo">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+                Upload Video
+              </button>
+              <div class="video-progress-wrap hidden" id="videoProgressWrap">
+                <div class="progress-bar-bg">
+                  <div class="progress-bar-fill" id="videoProgressBar"></div>
+                </div>
+                <span class="progress-text" id="videoProgressText">0%</span>
+              </div>
+            </div>
+
+            <!-- Live Webcam Actions -->
+            <div class="mode-actions hidden" id="liveActions">
+              <button class="action-btn primary" id="btnToggleWebcam">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+                Start Webcam
+              </button>
+              <button class="action-btn secondary" id="btnToggleSynthetic">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="14" x="3" y="5" rx="2"/><polygon points="10 9 15 12 10 15 10 9"/></svg>
+                Synthetic Stream (No Cam)
+              </button>
+              <span class="live-status-indicator hidden" id="liveIndicator">
+                <span class="live-dot"></span> STREAMING
+              </span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- RIGHT BOX: MODIFIED (ESPCN 2X) -->
+      <section class="display-box modified-box" id="modifiedCard">
+        <div class="box-header">
+          <div class="box-title">
+            <span class="badge modified-badge">MODIFIED (ESPCN 2×)</span>
+            <span class="box-subtitle" id="modifiedResSubtitle">2× Super-Resolution</span>
+          </div>
+          <div class="box-meta">
+            <span class="meta-tag latency-tag" id="latencyTag">-- ms</span>
+            <span class="meta-tag fps-tag" id="fpsTag">-- FPS</span>
+          </div>
+        </div>
+
+        <div class="viewport-stage" id="modifiedViewport">
+          <!-- Placeholder state -->
+          <div class="empty-state" id="modifiedEmptyState">
+            <div class="empty-icon modified-icon">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            </div>
+            <p class="empty-title">Super-resolved output will appear here</p>
+            <p class="empty-desc">Processed with 21K-parameter Codec-Adapted ESPCN</p>
+          </div>
+
+          <!-- Video element for upscaled video playback -->
+          <video id="modifiedVideo" controls playsinline class="display-media hidden"></video>
+
+          <!-- Image element for static upscaled photos / live frames -->
+          <img id="modifiedImage" class="display-media hidden" alt="Enhanced Frame" />
+
+          <!-- Loading overlay -->
+          <div class="processing-spinner-overlay hidden" id="processingOverlay">
+            <div class="spinner"></div>
+            <span>Super-resolving frame...</span>
+          </div>
+        </div>
+
+        <!-- Controls BELOW Modified Box -->
+        <div class="box-footer-controls">
+          <div class="comparison-switch-row">
+            <span class="switch-label">Comparison Mode:</span>
+            <div class="segmented-control">
+              <button class="seg-btn active" id="btnViewSideBySide">Side by Side</button>
+              <button class="seg-btn" id="btnViewBicubic">Compare vs Bicubic</button>
+            </div>
+          </div>
+
+          <!-- Save / Capture Buttons -->
+          <div class="output-actions-bar">
+            <!-- Photo Mode: Save Photo -->
+            <button class="action-btn success" id="btnSavePhoto" disabled>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+              Save Photo (2×)
+            </button>
+
+            <!-- Video Mode: Save Video -->
+            <button class="action-btn success hidden" id="btnSaveVideo" disabled>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+              Download Upscaled Video
+            </button>
+
+            <!-- Live Stream Mode: Capture Frame -->
+            <button class="action-btn success hidden" id="btnCaptureLiveFrame" disabled>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+              Capture Frame
+            </button>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- Hardware Benchmark Modal -->
+  <div class="modal-backdrop hidden" id="benchmarkModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          <h3>Hardware Inference Benchmark</h3>
+        </div>
+        <button class="modal-close-btn" id="btnCloseBenchmark">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">
+          Evaluates frame latency and throughput across your CPU threads, GPU (CUDA), and DirectML backends using the loaded ESPCN model.
+        </p>
+        <div class="benchmark-action-row">
+          <button class="action-btn primary" id="btnRunBenchmark">
+            Run Benchmark (40 Iterations)
+          </button>
+          <span class="benchmark-spinner hidden" id="benchmarkSpinner">Benchmarking...</span>
+        </div>
+
+        <div class="benchmark-results-table-wrap hidden" id="benchmarkResultsWrap">
+          <table class="benchmark-table">
+            <thead>
+              <tr>
+                <th>Execution Target</th>
+                <th>Provider</th>
+                <th>Median Latency</th>
+                <th>Throughput</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="benchmarkTableBody">
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Drawer: Live Server Event Log / Telemetry & Error Viewer -->
+  <footer class="telemetry-drawer" id="telemetryDrawer">
+    <div class="drawer-header" id="drawerToggle">
+      <div class="drawer-header-left">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-6-6-6"/><path d="M12 19h8"/></svg>
+        <span class="drawer-title">Server Telemetry & Event Log</span>
+        <span class="event-count-badge" id="eventCountBadge">0 events</span>
+      </div>
+      <div class="drawer-header-right">
+        <span class="model-meta-info" id="modelMetaInfo">Model: espcn_codec_res_v3_fp16.onnx</span>
+        <button class="drawer-arrow-btn" id="drawerArrow">▲</button>
+      </div>
+    </div>
+    <div class="drawer-content collapsed" id="drawerContent">
+      <div class="log-stream" id="logStream">
+        <div class="log-entry info">
+          <span class="log-time">[Init]</span>
+          <span class="log-text">Connecting to server event stream...</span>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
