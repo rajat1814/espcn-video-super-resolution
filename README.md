@@ -64,6 +64,20 @@ FP16 is about 1.26x faster than FP32 on the GPU and matches its output to within
 
 ## Quick start
 
+### 🌐 Interactive Web Dashboard (Local Server)
+
+Run the full interactive web dashboard (photo upscaling, network compression simulation, video processing, live stream, and hardware benchmark) with one click:
+
+```bash
+web_launch.bat         # Windows (auto-configures dependencies & opens browser)
+./web_launch.sh        # Linux / macOS
+```
+*Opens **http://127.0.0.1:8000** in your browser.* See [`web/README.md`](web/README.md) for architecture, API documentation, and details.
+
+---
+
+### CLI & Desktop OpenCV Live Stream
+
 ```bash
 python -m venv venv && venv\Scripts\activate        # Linux/macOS: source venv/bin/activate
 # NVIDIA GPU: first install PyTorch with CUDA from pytorch.org, then:
@@ -124,6 +138,8 @@ Raw outputs: `results/v1_backup/`, `results_v2/`, `results_v3/`. The team's firs
 ## Repository layout
 
 ```
+web/           interactive web dashboard & FastAPI backend (see web/README.md)
+web_launch.*   one-click cross-platform launch scripts (Windows / Linux / macOS)
 models/        espcn.py (architecture, load_espcn) and the exported .onnx models
 checkpoints/   trained PyTorch weights (~86 KB each)
 results/       final csv/, figures/, tables/  (+ legacy/, v1_backup/); results_v2/, results_v3/ hold the raw round outputs
