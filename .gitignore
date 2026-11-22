@@ -4,9 +4,16 @@ env/
 venv/
 .venv/
 __pycache__/
+**/__pycache__/
 *.pyc
+*.pyo
+*.pyd
 .ipynb_checkpoints/
 .vscode/
+
+# web server temporary data and uploads
+web/temp_uploads/
+web/temp_videos/
 
 # generated data (recreate with make_datasets.py)
 data/hr/
